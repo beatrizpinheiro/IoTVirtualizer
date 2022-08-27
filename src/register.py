@@ -24,24 +24,20 @@ class Register(object):
         }
         print(resourceData)
         try:
-            f = open('VIRTUALIZER_direct_time_regist_resource.csv','a')
-            writer = csv.writer(f)
+            #f = open('VIRTUALIZER_direct_time_regist_resource.csv','a')
+            #writer = csv.writer(f)
             timeini = time.time()
             data_envio = datetime.now()
             response = requests.post (self.inctaddr + '/adaptor/resources/', data = json.dumps(resourceData), headers=self.headers)
-            
             timefim = time.time()
             print("TEMPO DE ENVIO DIRETO")
             print(timefim-timeini)
-            
-            row = [timefim-timeini , data_envio, json.loads(response.text)["data"]["uuid"]]
-            writer.writerow(row)
-            f.close()
-
-            print(response.text)
+            #row = [timefim-timeini , data_envio, json.loads(response.text)["data"]["uuid"]]
+            #writer.writerow(row)
+            #f.close()
             return response.text
-        except:
-            print("[REGISTER]Erro no Registro")
+        except Exception as e:
+            print("[REGISTER]Erro no Registro: ", e)
             return -1
 
     def regCap(self,regInfos):
@@ -60,9 +56,7 @@ class Register(object):
 
         for sensor in regInfos["realSensors"]:
             response = requests.get(self.inctaddr + '/catalog/resources/' + sensor["uuid"], headers=self.headers)
-            #print(type(response.text))
-            # print(response.text)
             iotGatewayAddr = json.loads(response.__dict__["_content"].decode("utf-8"))
-            print(iotGatewayAddr["data"]["description"])
+
             iotGatewayAddr = json.loads(iotGatewayAddr["data"]["description"])
             response = requests.post(iotGatewayAddr["gatewayAddr"] + '/virtualizers', data = urllib.request.urlopen('https://ident.me').read().decode('utf8'), headers = self.headers)

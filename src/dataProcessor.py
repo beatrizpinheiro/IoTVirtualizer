@@ -10,7 +10,6 @@ class DataProcessor:
     def start(self, data, association, capName, uuid):
         response = self.pCapabilities.run(association[0], data)
         print("[DATA PROCESSOR] RESULTADO")
-        #print(response)
 
         data = {
             "data":{

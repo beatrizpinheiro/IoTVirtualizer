@@ -15,7 +15,8 @@ class Sender(object):
 
         print(uuid)
         print(resourceData)
-        response = requests.post (self.inctaddr + '/adaptor/resources/' + uuid + '/data', data = json.dumps(resourceData), headers=self.headers)
-        print(response.text)
+        response = requests.post (self.inctaddr + '/adaptor/resources/' + uuid + '/data', json = (resourceData), headers=self.headers)
+        print("response: ",response.text)
         print("[SENDER] DADO ENVIADO")
+        print(response)
         return response.text

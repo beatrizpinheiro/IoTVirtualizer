@@ -1,16 +1,25 @@
 from datetime import datetime, timedelta
+import logging
 from time import sleep
 from sender import Sender
 from cataloguer import Cataloguer
 from register import Register
+from datetime import datetime
 from dataProcessor import DataProcessor
-from database import VirtualRes, Capabilities, ResourceCapability, RealSensors, SensorData
+from database import (
+    VirtualRes,
+    Capabilities,
+    ResourceCapability,
+    RealSensors,
+    SensorData,
+)
 import json
-
+import pika
 import csv
 import time
 
-class Manager (object):
+
+class Manager(object):
     def __init__(self):
         print("[MANAGER] MANAGER INICIADO")
         self.sender = Sender()
@@ -18,92 +27,82 @@ class Manager (object):
         self.cataloguer = Cataloguer()
         self.dataProcessor = DataProcessor()
 
-    def manageSendData(self,data):
+    def manageSendData(self, data):
         print("[MANAGER] Envio de dados Iniciado")
         return self.sender.sendData(data)
 
-    def manageRegistResource(self,data):
-        try:     
+    def manageRegistResource(self, data, channel, connection):
+        try:
             response = self.register.regData(data)
             response = json.loads(response)
-            #if(response["realSensors"] != None):
+
+            # if(response["realSensors"] != None):
             #    self.register.regIoTGateway(data) #cadastra no iot gateway
-            if(response != -1):
-                resource = self.cataloguer.saveResource(data, response)
+
+            if response != -1:
+                resource = self.cataloguer.saveResource(
+                    data, response, channel, connection
+                )
                 return resource
-        except:
+        except Exception as e:
+            print(e)
             return -1
 
-    def manageRegistCapability(self,data):
-        capability={
-            "name":data["name"],
-            "description":data["description"],
-            "capability_type":"sensor"
+    def manageRegistCapability(self, data, channel, connection):
+        capability = {
+            "name": data["name"],
+            "description": data["description"],
+            "capability_type": "sensor",
         }
         response = self.register.regCap(capability)
-        if(response != -1):
-            capability = self.cataloguer.saveCapability(data)
+        if response != -1:
+            capability = self.cataloguer.saveCapability(data, channel, connection)
             return capability
         return -1
 
-    def manageDataProcess(self, data):
+    def manageDataProcess(self, data, channel, connection):
         try:
-            response = self.cataloguer.saveData(data)
+            response = self.cataloguer.saveData(data, channel, connection)
             return response
         except:
             return "[MANAGER] Erro no processo de recebimento de dados"
 
-    def processActivator(self, sleepTime):
-        #requisitos satisfeitos?
-        processos = ResourceCapability.select()
-        i=0
-        while(1):
-            print("[MANAGER] ProcessActivator Iniciado")
-            for rescap in processos:
-                ini = time.time()
-                cap = Capabilities.select(Capabilities.association, Capabilities.name).where(Capabilities.id==rescap.capability).get()
-                cap = cap.__dict__["__data__"]
-                association = cap["association"].split(":")
-                # print(cap) # jsonCapabilityAssociation
+    def callback(self, ch, method, properties, body):
+        logging.info(" [x] Received %r" % body.decode())
+        time.sleep(body.count(b"."))
+        logging.info(" [x] Done")
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+        uuid = ((str)(body.decode()).split(";")[0]).split(":")[0]
+        neighborhood = ((str)(body.decode()).split(";")[0]).split(":")[1]
+        average = (str)(body.decode()).split(";")[1]
 
-                #rsensors = RealSensors.select().join(VirtualRes).where(VirtualRes == rescap.virtualresource)
-                rsensors = RealSensors.select().join(VirtualRes, on=(RealSensors.virtualresource==rescap.virtualresource))
-                data = SensorData.select(SensorData.data, SensorData.timestamp).where(SensorData.sensor.in_(rsensors))
-                dataList = []
-                qtdData = 0
-                for value in data.dicts():
-                    diference = datetime.now() - value["timestamp"]
-                
-                    if(diference > timedelta(minutes = 10)):
-                        print("[MANAGER] Dado deletado da DB: timestamp > 10 min")
-                        querry = SensorData.delete().where(SensorData.timestamp == value["timestamp"])
-                        querry.execute()
+        data = {
+            "data": {
+                "environment_monitoring": [
+                    {
+                        "neighborhood": neighborhood,
+                        "temperature": str(average),
+                        "timestamp": str(datetime.now())
+                    }
+                ]
+            }
+        }
+        self.sender.sendData(data, uuid)
 
-                for value in data.dicts():
-                    qtdData+=1
-                    valueData = json.loads(value["data"])
-                    dataList.append(valueData[association[1]])
-                
-                uuid = VirtualRes.select(VirtualRes.uuid).where(VirtualRes.id == rescap.virtualresource)
-                for data in uuid.dicts():
-                    uuid = data["uuid"]
-                print("-------------")
-                print(qtdData)
-                print("dados encontrados")
-                print("-------------")
-                if(qtdData>=1):
-                    print("[MANAGER] Processando Dado")
-                    self.dataProcessor.start(dataList, association, cap["name"], uuid)
-                fim = time.time()
+    def processActivator(self, sleeptime):
+        logging.info("[MANAGER] ProcessActivator Iniciado")
 
-                f = open('VIRTUALIZER_time_process_data.csv','a')
-                writer = csv.writer(f)
-                row = [fim-ini , qtdData, association, datetime.now()]
-                writer.writerow(row)
-                f.close()
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(host="localhost")
+        )
 
-                print("TEMPO PROCESSAMENTO PROCESSACTIVATOR")
-                print(fim-ini)
-            sleep(sleepTime)
-            
-            
+        channel = connection.channel()
+        channel.queue_declare(queue="task_queue_output", durable=True)
+        channel.basic_qos(prefetch_count=1)
+        channel.basic_consume(
+            queue="task_queue_output", on_message_callback=self.callback
+        )
+
+        logging.info(" [*] Waiting for messages. To exit press CTRL+C")
+
+        channel.start_consuming()
